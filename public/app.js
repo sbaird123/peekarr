@@ -71,8 +71,26 @@ let ytApiReady = false;
 let ytApiCallbacks = [];
 let ytApiLoaded = false;
 let itemCache = [];
+// Once the user has interacted with the page at all, browsers allow unmuted
+// playback without the muted-first-then-unmute dance. Flip this on any gesture
+// so subsequent swipes unmute cleanly and eagerly.
+let audioEnabled = false;
+['pointerdown', 'touchstart', 'keydown'].forEach((evt) => {
+  window.addEventListener(evt, () => { audioEnabled = true; }, { once: true, capture: true, passive: true });
+});
 
-const PLAYER_WINDOW = 1; // keep players at current ± N slides; destroy the rest
+const PLAYER_WINDOW = 3; // max distance ahead we keep players alive
+
+// Users swipe forward ~95% of the time, so the warm window is asymmetric:
+// 3 future slides (the ones they're likely to hit) + 1 prior (for back-swipes).
+// Delays stagger the warm-ups so they don't all compete for bandwidth with the
+// active player — +1 is immediate because it's the most likely next slide.
+const WARM_PLAN = [
+  { d:  1, delay:    0 },
+  { d:  2, delay:  400 },
+  { d:  3, delay:  800 },
+  { d: -1, delay: 1200 },
+];
 
 const TABS = {
   movies: [
@@ -158,18 +176,30 @@ function renderTabs() {
     });
     container.appendChild(btn);
   });
+
+  // Mirror into mobile dropdown.
+  const listSel = document.getElementById('list-select');
+  listSel.innerHTML = '';
+  TABS[currentMode].forEach((t) => {
+    const opt = document.createElement('option');
+    opt.value = t.list;
+    opt.textContent = t.label;
+    if (t.list === currentList) opt.selected = true;
+    listSel.appendChild(opt);
+  });
+
+  document.getElementById('mode-select').value = currentMode;
   document.getElementById('search-input').placeholder =
     currentMode === 'movies' ? 'Search movies...' : 'Search TV shows...';
 }
 
 // ── Slide builder (with YouTube facade) ──────────────────────────────────────
 function ytThumb(key) {
-  // hqdefault is guaranteed to exist; maxresdefault is nicer but not always.
-  // Try maxres first via img onerror fallback.
-  return {
-    primary: `https://i.ytimg.com/vi/${key}/maxresdefault.jpg`,
-    fallback: `https://i.ytimg.com/vi/${key}/hqdefault.jpg`,
-  };
+  // hqdefault (480x360) is guaranteed to exist for every video. maxresdefault
+  // is nicer when present but 404s on older/less-popular trailers, noisily —
+  // and this thumbnail is only visible for the split second before the real
+  // iframe loads over it, so the quality delta isn't worth the console spam.
+  return { primary: `https://i.ytimg.com/vi/${key}/hqdefault.jpg` };
 }
 
 function buildSlide(item, index) {
@@ -190,8 +220,7 @@ function buildSlide(item, index) {
     <div class="slide-bg" style="background-image:url('${item.backdrop_path || item.poster_path || ''}')"></div>
     <div class="video-wrap" id="vwrap-${index}">
       <div class="yt-facade" id="yt-facade-${index}">
-        <img class="yt-facade-img" src="${thumb.primary}" alt="" loading="lazy"
-             onerror="this.onerror=null;this.src='${thumb.fallback}'" />
+        <img class="yt-facade-img" src="${thumb.primary}" alt="" loading="lazy" />
       </div>
       <div class="yt-mount" id="yt-${index}" hidden></div>
     </div>
@@ -274,18 +303,40 @@ function createPlayer(item, index) {
         modestbranding: 1,
         playsinline: 1,
         enablejsapi: 1,
+        // Declaring origin up front lets YT's widget target postMessage correctly
+        // from the first handshake, instead of logging "target origin mismatch"
+        // warnings until the iframe has fully loaded.
+        origin: window.location.origin,
       },
       events: {
         onReady: (e) => {
           playerReady[index] = true;
           e.target.mute();
-          if (swiper && swiper.activeIndex === index) autoPlaySlide(index);
+          const active = swiper ? swiper.activeIndex : 0;
+          if (active === index) {
+            autoPlaySlide(index);
+          } else {
+            // Pre-buffer every neighbour player kept alive by PLAYER_WINDOW.
+            // YouTube only downloads once playVideo() fires, so we play muted
+            // for ~1.5s (enough to cache the intro) then pause. Trade-off is
+            // bandwidth for near-instant swipes.
+            try { e.target.playVideo(); } catch {}
+            setTimeout(() => {
+              // Bail if destroyed or if the user has since swiped onto this slide —
+              // pausing a now-active player would kill their playback.
+              if (players[index] !== e.target) return;
+              if (swiper && swiper.activeIndex === index) return;
+              try { e.target.pauseVideo(); } catch {}
+            }, 1500);
+          }
         },
         onStateChange: (e) => {
           const shield = document.getElementById(`shield-${index}`);
           if (!shield) return;
-          if (e.data === YT.PlayerState.PLAYING) shield.classList.add('playing');
-          else shield.classList.remove('playing');
+          // Treat BUFFERING as "still playing" so the overlay play-icon doesn't
+          // flash every time the stream stalls for a moment.
+          const busy = e.data === YT.PlayerState.PLAYING || e.data === YT.PlayerState.BUFFERING;
+          shield.classList.toggle('playing', busy);
         },
       },
     });
@@ -311,26 +362,54 @@ function togglePlay(index) {
   const p = players[index];
   if (!p || !playerReady[index]) return;
   const state = p.getPlayerState();
-  if (state === YT.PlayerState.PLAYING) {
+  let muted = false;
+  try { muted = p.isMuted(); } catch {}
+
+  // Muted-but-playing (autoplay default, or warm-up) → tap should unmute,
+  // not pause. Only a tap on an actually-audible playing video pauses.
+  if (state === YT.PlayerState.PLAYING && !muted) {
     p.pauseVideo();
   } else {
-    p.playVideo();
-    p.unMute();
-    p.setVolume(80);
+    try {
+      if (state !== YT.PlayerState.PLAYING) p.playVideo();
+      p.unMute();
+      p.setVolume(80);
+    } catch {}
+    audioEnabled = true;
   }
 }
 
 function autoPlaySlide(index) {
   Object.keys(players).forEach((i) => {
     if (parseInt(i) !== index && players[i] && playerReady[i]) {
-      try { players[i].pauseVideo(); } catch {}
+      try { players[i].mute(); players[i].pauseVideo(); } catch {}
     }
   });
   const p = players[index];
   if (!p || !playerReady[index]) return;
-  p.mute();
-  p.playVideo();
-  setTimeout(() => { try { p.unMute(); p.setVolume(70); } catch {} }, 600);
+
+  // Optimistically hide the play-icon overlay so it doesn't flash while we
+  // wait for YT's onStateChange to catch up.
+  const shield = document.getElementById(`shield-${index}`);
+  if (shield) shield.classList.add('playing');
+
+  let state;
+  try { state = p.getPlayerState(); } catch {}
+
+  if (audioEnabled) {
+    // User has interacted — we're in a live gesture frame, so unmute eagerly
+    // and synchronously. Browsers honour unMute() only while the gesture is
+    // still in scope, so no setTimeout here.
+    try {
+      p.unMute();
+      p.setVolume(70);
+      if (state !== YT.PlayerState.PLAYING) p.playVideo();
+    } catch {}
+  } else {
+    // First slide, no gesture yet — muted autoplay is all the browser allows.
+    // User will tap to unmute (togglePlay flips audioEnabled from then on).
+    try { p.mute(); p.playVideo(); } catch {}
+  }
 }
 
 function ensurePlayer(item, index) {
@@ -339,12 +418,27 @@ function ensurePlayer(item, index) {
 }
 
 // Keep only a window of players around the active index; destroy the rest.
+// Matches WARM_PLAN's coverage so we don't immediately destroy what we just warmed.
 function gcPlayers(activeIdx) {
-  const keep = new Set();
-  for (let d = -PLAYER_WINDOW; d <= PLAYER_WINDOW; d++) keep.add(activeIdx + d);
+  const keep = new Set([activeIdx, activeIdx - 1]);
+  for (let d = 1; d <= PLAYER_WINDOW; d++) keep.add(activeIdx + d);
   Object.keys(players).forEach((k) => {
     const i = parseInt(k, 10);
     if (!keep.has(i)) destroyPlayer(i);
+  });
+}
+
+function warmNeighbours(activeIdx) {
+  WARM_PLAN.forEach(({ d, delay }) => {
+    setTimeout(() => {
+      const ni = activeIdx + d;
+      if (ni < 0 || ni >= itemCache.length) return;
+      if (players[ni]) return;
+      // Bail if the user has swiped far past this slot in the interim —
+      // no point starting a player we're about to garbage-collect.
+      if (swiper && Math.abs(swiper.activeIndex - ni) > PLAYER_WINDOW) return;
+      createPlayer(itemCache[ni], ni);
+    }, delay);
   });
 }
 
@@ -452,6 +546,11 @@ function initSwiper() {
     speed: 380,
     resistanceRatio: 0.7,
     on: {
+      // Kick off neighbour warm-ups the instant the swipe begins so the 380ms
+      // of transition animation is spent pre-buffering, not waiting.
+      slideChangeTransitionStart(s) {
+        if (itemCache[s.activeIndex]) warmNeighbours(s.activeIndex);
+      },
       slideChangeTransitionEnd(s) {
         const idx = s.activeIndex;
         const item = itemCache[idx];
@@ -462,14 +561,6 @@ function initSwiper() {
 
         ensurePlayer(item, idx);
         autoPlaySlide(idx);
-
-        // Warm neighbours so swiping feels instant; tear down anything further.
-        for (let d = -PLAYER_WINDOW; d <= PLAYER_WINDOW; d++) {
-          const ni = idx + d;
-          if (ni >= 0 && ni < itemCache.length && !players[ni]) {
-            createPlayer(itemCache[ni], ni);
-          }
-        }
         gcPlayers(idx);
 
         if (idx >= itemCache.length - 4) loadFeed();
@@ -477,10 +568,12 @@ function initSwiper() {
     },
   });
 
+  // Warm the initial window on cold boot — the first swipe shouldn't be the
+  // one that triggers everything from scratch.
   const first = itemCache[0];
   if (first) {
     ensurePlayer(first, 0);
-    if (itemCache[1]) createPlayer(itemCache[1], 1);
+    warmNeighbours(0);
   }
 }
 
@@ -616,16 +709,30 @@ document.getElementById('modal-confirm').addEventListener('click', async () => {
 });
 
 // ── Mode toggle ───────────────────────────────────────────────────────────────
-document.querySelectorAll('.mode-btn').forEach((btn) => {
-  btn.addEventListener('click', () => {
-    if (btn.dataset.mode === currentMode) return;
-    currentMode = btn.dataset.mode;
-    currentList = TABS[currentMode][0].list;
-    document.querySelectorAll('.mode-btn').forEach((b) => b.classList.remove('active'));
-    btn.classList.add('active');
-    renderTabs();
-    loadFeed(true);
+function switchMode(mode) {
+  if (mode === currentMode) return;
+  currentMode = mode;
+  currentList = TABS[currentMode][0].list;
+  document.querySelectorAll('.mode-btn').forEach((b) => {
+    b.classList.toggle('active', b.dataset.mode === mode);
   });
+  renderTabs();
+  loadFeed(true);
+}
+
+document.querySelectorAll('.mode-btn').forEach((btn) => {
+  btn.addEventListener('click', () => switchMode(btn.dataset.mode));
+});
+
+document.getElementById('mode-select').addEventListener('change', (e) => {
+  switchMode(e.target.value);
+});
+
+document.getElementById('list-select').addEventListener('change', (e) => {
+  if (e.target.value === currentList) return;
+  currentList = e.target.value;
+  renderTabs();
+  loadFeed(true);
 });
 
 // ── Search ────────────────────────────────────────────────────────────────────

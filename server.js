@@ -182,7 +182,13 @@ function pickTrailer(videos) {
 // ── Feed builders (reusable by routes + SSR + prewarm) ───────────────────────
 async function buildMovieFeed({ list, page }) {
   const data = await tmdb(`/movie/${list}`, { page }, POLICY_LIST);
-  const movies = data.results || [];
+  let movies = data.results || [];
+  // TMDB's /movie/upcoming happily returns old re-releases and indie second
+  // runs — drop anything that's already out so "Upcoming" actually means it.
+  if (list === 'upcoming') {
+    const today = new Date().toISOString().slice(0, 10);
+    movies = movies.filter((m) => m.release_date && m.release_date >= today);
+  }
   const enriched = await Promise.all(movies.map(async (movie) => {
     try {
       const videos = await tmdb(`/movie/${movie.id}/videos`, {}, POLICY_STATIC);
@@ -471,12 +477,14 @@ async function radarrStatusById(tmdbId) {
   const ckey = `radarr:${tmdbId}`;
   const cached = statusCache.get(ckey);
   if (cached && cached.hardExpire > Date.now()) return cached.value;
-  const results = await radarr('GET', `/movie/lookup/tmdb?tmdbId=${tmdbId}`);
-  const movie = Array.isArray(results) ? results[0] : results;
+  // /movie?tmdbId=X filters the library directly — the external /movie/lookup/tmdb
+  // endpoint doesn't always populate the library id, so it mis-reports "not added".
+  const results = await radarr('GET', `/movie?tmdbId=${tmdbId}`);
+  const movie = Array.isArray(results) && results.length ? results[0] : null;
   const status = {
-    exists: !!(movie && movie.id),
+    exists: !!movie,
     monitored: movie ? movie.monitored : false,
-    hasFile: movie ? movie.hasFile : false,
+    hasFile: movie ? !!movie.hasFile : false,
   };
   statusCache.set(ckey, status, POLICY_STATUS);
   return status;

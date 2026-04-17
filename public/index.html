@@ -4,10 +4,12 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>Peekarr</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%23e50914'/><text x='16' y='23' font-family='-apple-system,Segoe UI,sans-serif' font-size='20' font-weight='800' fill='white' text-anchor='middle'>P</text></svg>" />
 
   <!-- Preconnect to origins we fetch from on first paint -->
   <link rel="preconnect" href="https://i.ytimg.com" crossorigin />
   <link rel="preconnect" href="https://www.youtube.com" crossorigin />
+  <link rel="preconnect" href="https://www.google.com" crossorigin />
   <link rel="preconnect" href="https://image.tmdb.org" crossorigin />
   <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
   <link rel="dns-prefetch" href="https://www.googlevideo.com" />
@@ -23,9 +25,16 @@
       <button class="mode-btn active" data-mode="movies">Movies</button>
       <button class="mode-btn" data-mode="tv">TV</button>
     </div>
+    <select id="mode-select" class="topbar-select" aria-label="Movies or TV">
+      <option value="movies">Movies</option>
+      <option value="tv">TV</option>
+    </select>
     <div id="nav-tabs">
       <!-- tabs injected by JS -->
     </div>
+    <select id="list-select" class="topbar-select" aria-label="List">
+      <!-- options injected by JS -->
+    </select>
     <button id="search-btn" title="Search">&#128269;</button>
     <a id="settings-btn" href="/settings" title="Settings" aria-label="Settings">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

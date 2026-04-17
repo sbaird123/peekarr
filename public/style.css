@@ -134,6 +134,39 @@ html, body {
 }
 #settings-btn:hover { opacity: 1; transform: rotate(30deg); }
 
+/* Mobile-only dropdowns replacing the pill tabs below 640px. */
+.topbar-select {
+  display: none;
+  background: rgba(20,20,24,.85);
+  color: #f0f0f0;
+  border: 1px solid rgba(255,255,255,.22);
+  border-radius: 20px;
+  padding: 6px 30px 6px 14px;
+  font-size: .85rem;
+  font-weight: 600;
+  cursor: pointer;
+  outline: none;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  /* chevron */
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path fill='%23e8e8e8' d='M0 0l5 6 5-6z'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  background-size: 10px 6px;
+  text-shadow: 0 1px 3px rgba(0,0,0,.85);
+}
+.topbar-select option { background: #161616; color: #f0f0f0; }
+#mode-select { flex-shrink: 0; }
+#list-select { flex: 1; min-width: 0; max-width: 200px; }
+
+@media (max-width: 640px) {
+  #mode-toggle, #nav-tabs { display: none; }
+  .topbar-select { display: inline-block; }
+  #topbar { gap: 8px; padding: 0 12px; }
+  #logo { font-size: 1.15rem; }
+}
+
 /* ── Swiper ─────────────────────────────────────────────────────────────── */
 .swiper {
   position: fixed;
