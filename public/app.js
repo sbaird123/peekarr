@@ -67,6 +67,7 @@ let sonarrConfig = null;
 let pendingItem = null;
 let players = {};
 let playerReady = {};
+let prebuffering = {}; // index -> true while inside the warm-up's 1.5s window
 let ytApiReady = false;
 let ytApiCallbacks = [];
 let ytApiLoaded = false;
@@ -318,13 +319,14 @@ function createPlayer(item, index) {
           } else {
             // Pre-buffer every neighbour player kept alive by PLAYER_WINDOW.
             // YouTube only downloads once playVideo() fires, so we play muted
-            // for ~1.5s (enough to cache the intro) then pause. Trade-off is
-            // bandwidth for near-instant swipes.
+            // for ~1.5s (enough to cache 15-20s of video) then pause.
+            prebuffering[index] = true;
             try { e.target.playVideo(); } catch {}
             setTimeout(() => {
-              // Bail if destroyed or if the user has since swiped onto this slide —
-              // pausing a now-active player would kill their playback.
+              prebuffering[index] = false;
               if (players[index] !== e.target) return;
+              // Bail if the user has since swiped onto this slide — pausing a
+              // now-active player would kill their playback.
               if (swiper && swiper.activeIndex === index) return;
               try { e.target.pauseVideo(); } catch {}
             }, 1500);
@@ -349,6 +351,7 @@ function destroyPlayer(index) {
   try { p.destroy(); } catch {}
   delete players[index];
   delete playerReady[index];
+  delete prebuffering[index];
   // Restore facade so there's still something to look at.
   const mount  = document.getElementById(`yt-${index}`);
   const facade = document.getElementById(`yt-facade-${index}`);
@@ -381,9 +384,15 @@ function togglePlay(index) {
 
 function autoPlaySlide(index) {
   Object.keys(players).forEach((i) => {
-    if (parseInt(i) !== index && players[i] && playerReady[i]) {
-      try { players[i].mute(); players[i].pauseVideo(); } catch {}
-    }
+    const idx = parseInt(i, 10);
+    if (idx === index || !players[i] || !playerReady[i]) return;
+    try {
+      players[i].mute();
+      // Skip pausing neighbours currently in their warm-up window —
+      // autoPlaySlide fires at transitionEnd (~380ms) while warm-up's timeout
+      // hasn't hit yet, so pausing here would abort the pre-buffer fill.
+      if (!prebuffering[idx]) players[i].pauseVideo();
+    } catch {}
   });
   const p = players[index];
   if (!p || !playerReady[index]) return;
@@ -519,7 +528,10 @@ async function loadFeed(reset = false) {
       if (reset) {
         swiper.slideTo(0, 0, false);
         const first = itemCache[0];
-        if (first) ensurePlayer(first, 0);
+        if (first) {
+          ensurePlayer(first, 0);
+          warmNeighbours(0);
+        }
       }
     }
 
