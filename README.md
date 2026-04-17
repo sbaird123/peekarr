@@ -4,6 +4,8 @@ A TikTok-style trailer browser for **Radarr** and **Sonarr**. Peek at upcoming m
 
 Built to feel like any other *arr — drop it in your Docker stack, configure through the UI, done.
 
+![Peekarr](docs/screenshot.png)
+
 ## Features
 
 - Vertical swipe feed of YouTube trailers (TMDB source)
@@ -51,8 +53,6 @@ Use the Docker service name as the URL — e.g. `http://radarr:7878` and `http:/
 
 Tested on TrueNAS SCALE Electric Eel (25.x).
 
-### Option A — Custom App (UI only, easiest)
-
 1. Create a dataset for persistent config, e.g. `tank/apps/peekarr/config`.
 2. **Apps → Discover Apps → Custom App** (top-right).
 3. Fill in:
@@ -60,29 +60,8 @@ Tested on TrueNAS SCALE Electric Eel (25.x).
    - **Image Repository:** `ghcr.io/sbaird123/peekarr`
    - **Image Tag:** `latest`
    - **Networking → Port Forwarding:** add an entry with **Container Port** `3000` and **Node Port** of your choice (e.g. `30007`). TrueNAS won't expose the app externally without this — the container listens on 3000 inside, but nothing reaches it from the LAN until you map it to a host port here.
-   - **Storage → Host Path Volumes:** mount `/mnt/tank/apps/peekarr/config` → `/config`
-4. Install, wait for the pod to go green, then visit `http://<truenas-ip>:<node-port>/settings`.
-
-### Option B — Docker Compose Stack (Electric Eel+)
-
-1. Create the config dataset as above.
-2. **Apps → Manage Stacks → Create** (or SSH in and drop this in a compose file):
-
-```yaml
-services:
-  peekarr:
-    image: ghcr.io/sbaird123/peekarr:latest
-    container_name: peekarr
-    ports:
-      - "3000:3000"
-    volumes:
-      - /mnt/tank/apps/peekarr/config:/config
-    restart: unless-stopped
-```
-
-3. Deploy, then hit `http://<truenas-ip>:3000/settings`.
-
-If Radarr/Sonarr are also TrueNAS apps, use their internal URLs (e.g. `http://radarr.ix-radarr.svc.cluster.local:7878` for Helm charts, or `http://radarr:7878` if they're in the same compose stack). A full IP like `http://192.168.1.10:7878` always works too.
+   - **Storage → Host Path Volumes** (or **ixVolumes**): mount your config dataset → `/config`
+4. Install, wait for the app to go green, then visit `http://<truenas-ip>:<node-port>/settings`.
 
 ## Build from source
 

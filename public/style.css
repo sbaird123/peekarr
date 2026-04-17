@@ -552,6 +552,30 @@ html, body {
 }
 #toast.show { transform: translateX(-50%) translateY(0); }
 
+/* ── Muted-autoplay hint ─────────────────────────────────────────────────── */
+#mute-hint {
+  position: fixed;
+  top: calc(var(--topbar-h) + 12px);
+  right: 14px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: rgba(0, 0, 0, .55);
+  color: #fff;
+  font-size: .8rem;
+  font-weight: 600;
+  border-radius: 16px;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  z-index: 250;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: opacity .4s ease, transform .4s ease;
+}
+#mute-hint.show { opacity: 1; transform: translateY(0); }
+
 /* ── Loading ────────────────────────────────────────────────────────────── */
 #loading-overlay {
   position: fixed;

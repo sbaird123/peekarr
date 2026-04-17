@@ -67,7 +67,6 @@ let sonarrConfig = null;
 let pendingItem = null;
 let players = {};
 let playerReady = {};
-let prebuffering = {}; // index -> true while inside the warm-up's 1.5s window
 let ytApiReady = false;
 let ytApiCallbacks = [];
 let ytApiLoaded = false;
@@ -77,21 +76,36 @@ let itemCache = [];
 // so subsequent swipes unmute cleanly and eagerly.
 let audioEnabled = false;
 ['pointerdown', 'touchstart', 'keydown'].forEach((evt) => {
-  window.addEventListener(evt, () => { audioEnabled = true; }, { once: true, capture: true, passive: true });
+  window.addEventListener(evt, () => {
+    audioEnabled = true;
+    const hint = document.getElementById('mute-hint');
+    if (hint) hint.classList.remove('show');
+  }, { once: true, capture: true, passive: true });
 });
 
-const PLAYER_WINDOW = 3; // max distance ahead we keep players alive
+// Keep the active slide's YT player plus the next one forward (users swipe
+// forward ~95% of the time). Going wider than +1 causes the active video to
+// stall — more than two iframes compete for the 6-connection limit to
+// googlevideo.com and for main-thread cycles. Everything else is a thumbnail
+// facade; preconnect hints in <head> keep the TCP/QUIC handshake warm.
+const PLAYER_WINDOW = 1;
 
-// Users swipe forward ~95% of the time, so the warm window is asymmetric:
-// 3 future slides (the ones they're likely to hit) + 1 prior (for back-swipes).
-// Delays stagger the warm-ups so they don't all compete for bandwidth with the
-// active player — +1 is immediate because it's the most likely next slide.
-const WARM_PLAN = [
-  { d:  1, delay:    0 },
-  { d:  2, delay:  400 },
-  { d:  3, delay:  800 },
-  { d: -1, delay: 1200 },
-];
+// Delay neighbour creation so the active video has a clean shot at its first
+// few segments before the +1 iframe starts competing. Short enough that the
+// warm-up is done before a typical next-swipe.
+const WARM_AHEAD_DELAY_MS = 1500;
+let warmTimer = null;
+
+// Brief muted play-kick for neighbour players to pull the first video segment
+// down. Without this YT only loads the player UI; bytes don't arrive until
+// playVideo() fires. 300ms is long enough to cache the opening seconds but
+// short enough not to meaningfully compete with the active player.
+const NEIGHBOUR_KICK_MS = 300;
+
+// If the active player sits in BUFFERING longer than this, kick it with
+// playVideo(). YT occasionally fails to recover on its own after a stall.
+const STALL_RECOVERY_MS = 4000;
+let stallTimers = {};
 
 const TABS = {
   movies: [
@@ -313,32 +327,44 @@ function createPlayer(item, index) {
         onReady: (e) => {
           playerReady[index] = true;
           e.target.mute();
+          // Cap quality at 720p. Auto-quality sometimes picks 1080p which has
+          // larger segments and recovers slower after a stall.
+          try { e.target.setPlaybackQuality('hd720'); } catch {}
           const active = swiper ? swiper.activeIndex : 0;
           if (active === index) {
             autoPlaySlide(index);
           } else {
-            // Pre-buffer every neighbour player kept alive by PLAYER_WINDOW.
-            // YouTube only downloads once playVideo() fires, so we play muted
-            // for ~1.5s (enough to cache 15-20s of video) then pause.
-            prebuffering[index] = true;
+            // Neighbour: short muted play-kick to cache the first segment, then
+            // pause. Bail if the user swiped onto this slide mid-kick (pausing
+            // a now-active player would kill playback).
             try { e.target.playVideo(); } catch {}
             setTimeout(() => {
-              prebuffering[index] = false;
               if (players[index] !== e.target) return;
-              // Bail if the user has since swiped onto this slide — pausing a
-              // now-active player would kill their playback.
               if (swiper && swiper.activeIndex === index) return;
               try { e.target.pauseVideo(); } catch {}
-            }, 1500);
+            }, NEIGHBOUR_KICK_MS);
           }
         },
         onStateChange: (e) => {
           const shield = document.getElementById(`shield-${index}`);
-          if (!shield) return;
           // Treat BUFFERING as "still playing" so the overlay play-icon doesn't
           // flash every time the stream stalls for a moment.
           const busy = e.data === YT.PlayerState.PLAYING || e.data === YT.PlayerState.BUFFERING;
-          shield.classList.toggle('playing', busy);
+          if (shield) shield.classList.toggle('playing', busy);
+
+          // Stall watchdog: if we enter BUFFERING and don't leave it within
+          // STALL_RECOVERY_MS, kick with playVideo() — YT sometimes fails to
+          // resume on its own after a segment fetch times out.
+          clearTimeout(stallTimers[index]);
+          if (e.data === YT.PlayerState.BUFFERING) {
+            stallTimers[index] = setTimeout(() => {
+              const p = players[index];
+              if (!p) return;
+              try {
+                if (p.getPlayerState() === YT.PlayerState.BUFFERING) p.playVideo();
+              } catch {}
+            }, STALL_RECOVERY_MS);
+          }
         },
       },
     });
@@ -351,7 +377,8 @@ function destroyPlayer(index) {
   try { p.destroy(); } catch {}
   delete players[index];
   delete playerReady[index];
-  delete prebuffering[index];
+  clearTimeout(stallTimers[index]);
+  delete stallTimers[index];
   // Restore facade so there's still something to look at.
   const mount  = document.getElementById(`yt-${index}`);
   const facade = document.getElementById(`yt-facade-${index}`);
@@ -388,10 +415,7 @@ function autoPlaySlide(index) {
     if (idx === index || !players[i] || !playerReady[i]) return;
     try {
       players[i].mute();
-      // Skip pausing neighbours currently in their warm-up window —
-      // autoPlaySlide fires at transitionEnd (~380ms) while warm-up's timeout
-      // hasn't hit yet, so pausing here would abort the pre-buffer fill.
-      if (!prebuffering[idx]) players[i].pauseVideo();
+      players[i].pauseVideo();
     } catch {}
   });
   const p = players[index];
@@ -418,6 +442,8 @@ function autoPlaySlide(index) {
     // First slide, no gesture yet — muted autoplay is all the browser allows.
     // User will tap to unmute (togglePlay flips audioEnabled from then on).
     try { p.mute(); p.playVideo(); } catch {}
+    const hint = document.getElementById('mute-hint');
+    if (hint) hint.classList.add('show');
   }
 }
 
@@ -426,10 +452,9 @@ function ensurePlayer(item, index) {
   createPlayer(item, index);
 }
 
-// Keep only a window of players around the active index; destroy the rest.
-// Matches WARM_PLAN's coverage so we don't immediately destroy what we just warmed.
+// Keep only the active player and the forward window; destroy the rest.
 function gcPlayers(activeIdx) {
-  const keep = new Set([activeIdx, activeIdx - 1]);
+  const keep = new Set([activeIdx]);
   for (let d = 1; d <= PLAYER_WINDOW; d++) keep.add(activeIdx + d);
   Object.keys(players).forEach((k) => {
     const i = parseInt(k, 10);
@@ -437,18 +462,19 @@ function gcPlayers(activeIdx) {
   });
 }
 
+// Create neighbour players on a delay so the active slide gets its first
+// segments in cleanly before anything else competes for bandwidth.
 function warmNeighbours(activeIdx) {
-  WARM_PLAN.forEach(({ d, delay }) => {
-    setTimeout(() => {
+  clearTimeout(warmTimer);
+  warmTimer = setTimeout(() => {
+    if (!swiper || swiper.activeIndex !== activeIdx) return;
+    for (let d = 1; d <= PLAYER_WINDOW; d++) {
       const ni = activeIdx + d;
-      if (ni < 0 || ni >= itemCache.length) return;
-      if (players[ni]) return;
-      // Bail if the user has swiped far past this slot in the interim —
-      // no point starting a player we're about to garbage-collect.
-      if (swiper && Math.abs(swiper.activeIndex - ni) > PLAYER_WINDOW) return;
+      if (ni < 0 || ni >= itemCache.length) continue;
+      if (players[ni]) continue;
       createPlayer(itemCache[ni], ni);
-    }, delay);
-  });
+    }
+  }, WARM_AHEAD_DELAY_MS);
 }
 
 // ── Feed loading ──────────────────────────────────────────────────────────────
@@ -466,15 +492,19 @@ async function loadFeed(reset = false) {
 
   loading = true;
 
+  // Only show the full-screen spinner on cold load (nothing visible yet).
+  // For tab switches we keep the old slides on-screen during the fetch so the
+  // UI doesn't feel like it's reloading — the swap happens atomically once
+  // the new data arrives.
+  const coldLoad = reset && !itemCache.length;
+  if (coldLoad) setLoading(true);
+
+  // Compute the fetch target page without mutating shared state yet, so an
+  // aborted fetch doesn't leave things half-reset.
+  let fetchPage = currentPage;
   if (reset) {
     const maxStartPage = currentMode === 'tv' ? 3 : 6;
-    currentPage = Math.floor(Math.random() * maxStartPage) + 1;
-    itemCache = [];
-    // Destroy all existing players cleanly on reset.
-    Object.keys(players).forEach((i) => destroyPlayer(parseInt(i, 10)));
-    players = {};
-    playerReady = {};
-    setLoading(true);
+    fetchPage = Math.floor(Math.random() * maxStartPage) + 1;
   }
 
   try {
@@ -482,27 +512,38 @@ async function loadFeed(reset = false) {
       ? `/api/shows/feed?list=${currentList}`
       : `/api/feed?list=${currentList}`;
 
-    let results, newTotalPages;
+    let results, newTotalPages, nextPage;
 
     if (reset) {
-      const page2 = currentPage + 1;
+      const page2 = fetchPage + 1;
       const [r1, r2] = await Promise.all([
-        fetch(`${base}&page=${currentPage}`, { signal }).then((r) => r.json()),
+        fetch(`${base}&page=${fetchPage}`, { signal }).then((r) => r.json()),
         fetch(`${base}&page=${page2}`, { signal }).then((r) => r.json()),
       ]);
       if (r1.error) throw new Error(r1.error);
       newTotalPages = r1.total_pages;
-      currentPage = page2 + 1;
+      nextPage = page2 + 1;
       results = shuffle([...(r1.results || []), ...(r2.results || [])]);
     } else {
       const r = await fetch(`${base}&page=${currentPage}`, { signal }).then((r) => r.json());
       if (r.error) throw new Error(r.error);
       newTotalPages = r.total_pages;
-      currentPage++;
+      nextPage = currentPage + 1;
       results = shuffle(r.results || []);
     }
 
+    // Data arrived — commit the reset now (tear down old players, clear cache,
+    // blank the wrapper). This all happens synchronously with the rebuild so
+    // the user sees one atomic swap rather than a blank screen.
+    if (reset) {
+      Object.keys(players).forEach((i) => destroyPlayer(parseInt(i, 10)));
+      players = {};
+      playerReady = {};
+      itemCache = [];
+    }
+
     totalPages = newTotalPages;
+    currentPage = nextPage;
 
     const filtered = results.filter((item) =>
       !watchedSet.has(watchedKey(item.id, item.media_type)) &&
@@ -512,10 +553,7 @@ async function loadFeed(reset = false) {
     itemCache.push(...filtered);
 
     const wrapper = document.getElementById('swiper-wrapper');
-    if (reset) {
-      if (swiper) swiper.slideTo(0, 0, false);
-      wrapper.innerHTML = '';
-    }
+    if (reset) wrapper.innerHTML = '';
 
     filtered.forEach((item, i) => {
       wrapper.appendChild(buildSlide(item, startIndex + i));
@@ -545,7 +583,7 @@ async function loadFeed(reset = false) {
   } finally {
     if (!signal.aborted) {
       loading = false;
-      setLoading(false);
+      if (coldLoad) setLoading(false);
     }
   }
 }
