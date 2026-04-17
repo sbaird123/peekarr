@@ -13,7 +13,7 @@ FROM node:20-alpine AS runtime
 
 LABEL org.opencontainers.image.title="Peekarr"
 LABEL org.opencontainers.image.description="A TikTok-style trailer browser for Radarr/Sonarr"
-LABEL org.opencontainers.image.source="https://github.com/yourusername/peekarr"
+LABEL org.opencontainers.image.source="https://github.com/sbaird123/peekarr"
 
 RUN apk add --no-cache tini wget \
     && addgroup -g 1000 peekarr \

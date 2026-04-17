@@ -20,7 +20,7 @@ Built to feel like any other *arr — drop it in your Docker stack, configure th
 ```yaml
 services:
   peekarr:
-    image: ghcr.io/yourusername/peekarr:latest
+    image: ghcr.io/sbaird123/peekarr:latest
     container_name: peekarr
     ports:
       - "3000:3000"
@@ -50,7 +50,7 @@ Use the Docker service name as the URL — e.g. `http://radarr:7878` and `http:/
 ## Build from source
 
 ```sh
-git clone https://github.com/yourusername/peekarr
+git clone https://github.com/sbaird123/peekarr
 cd peekarr
 docker build -t peekarr .
 docker run -d --name peekarr -p 3000:3000 -v $(pwd)/config:/config peekarr

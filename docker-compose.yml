@@ -1,6 +1,6 @@
 services:
   peekarr:
-    image: ghcr.io/yourusername/peekarr:latest
+    image: ghcr.io/sbaird123/peekarr:latest
     container_name: peekarr
     # To build locally instead of pulling, comment out `image:` above
     # and uncomment:
