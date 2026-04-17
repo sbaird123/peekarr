@@ -111,6 +111,7 @@ Everything is optional — the Settings UI is the source of truth. Env vars only
 | ---------------- | ---------------------------------------------------------- |
 | `PORT`           | HTTP port (default `3000`)                                 |
 | `CONFIG_DIR`     | Path for the SQLite DB (default `/config` in Docker)       |
+| `PUID` / `PGID`  | uid/gid the app drops to at startup (default `1000`/`1000`) — match your host user if files under `/config` need to be readable outside the container |
 | `TMDB_API_KEY`   | TMDB v3 API key                                            |
 | `RADARR_URL`     | e.g. `http://radarr:7878`                                  |
 | `RADARR_API_KEY` | Radarr API key                                             |

@@ -15,7 +15,8 @@ LABEL org.opencontainers.image.title="Peekarr"
 LABEL org.opencontainers.image.description="A TikTok-style trailer browser for Radarr/Sonarr"
 LABEL org.opencontainers.image.source="https://github.com/sbaird123/peekarr"
 
-RUN apk add --no-cache tini wget
+# tini = PID 1 signal handling, su-exec = privilege drop, shadow = usermod/groupmod
+RUN apk add --no-cache tini wget su-exec shadow
 
 WORKDIR /app
 
@@ -23,21 +24,24 @@ COPY --from=deps /build/node_modules ./node_modules
 COPY package.json ./
 COPY server.js ./
 COPY public ./public
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-# Reuse the `node` user (uid/gid 1000) that ships with node:alpine
-RUN mkdir -p /config && chown -R node:node /config /app
+RUN mkdir -p /config
 
 ENV NODE_ENV=production \
     CONFIG_DIR=/config \
-    PORT=3000
+    PORT=3000 \
+    PUID=1000 \
+    PGID=1000
 
 VOLUME ["/config"]
 EXPOSE 3000
 
-USER node
-
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD wget -qO- http://localhost:3000/api/health >/dev/null 2>&1 || exit 1
 
-ENTRYPOINT ["/sbin/tini", "--"]
+# Entrypoint runs as root briefly to fix perms + set uid/gid, then su-exec's
+# down to the unprivileged `node` user for the rest of the process lifetime.
+ENTRYPOINT ["/sbin/tini", "--", "/usr/local/bin/docker-entrypoint.sh"]
 CMD ["node", "server.js"]
