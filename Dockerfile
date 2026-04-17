@@ -15,9 +15,7 @@ LABEL org.opencontainers.image.title="Peekarr"
 LABEL org.opencontainers.image.description="A TikTok-style trailer browser for Radarr/Sonarr"
 LABEL org.opencontainers.image.source="https://github.com/sbaird123/peekarr"
 
-RUN apk add --no-cache tini wget \
-    && addgroup -g 1000 peekarr \
-    && adduser -u 1000 -G peekarr -s /bin/sh -D peekarr
+RUN apk add --no-cache tini wget
 
 WORKDIR /app
 
@@ -26,7 +24,8 @@ COPY package.json ./
 COPY server.js ./
 COPY public ./public
 
-RUN mkdir -p /config && chown -R peekarr:peekarr /config /app
+# Reuse the `node` user (uid/gid 1000) that ships with node:alpine
+RUN mkdir -p /config && chown -R node:node /config /app
 
 ENV NODE_ENV=production \
     CONFIG_DIR=/config \
@@ -35,7 +34,7 @@ ENV NODE_ENV=production \
 VOLUME ["/config"]
 EXPOSE 3000
 
-USER peekarr
+USER node
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD wget -qO- http://localhost:3000/api/health >/dev/null 2>&1 || exit 1
