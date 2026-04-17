@@ -59,7 +59,7 @@ Tested on TrueNAS SCALE Electric Eel (25.x).
    - **Application Name:** `peekarr`
    - **Image Repository:** `ghcr.io/sbaird123/peekarr`
    - **Image Tag:** `latest`
-   - **Port Forwarding:** container `3000` → node port of your choice (e.g. `30007`)
+   - **Networking → Port Forwarding:** add an entry with **Container Port** `3000` and **Node Port** of your choice (e.g. `30007`). TrueNAS won't expose the app externally without this — the container listens on 3000 inside, but nothing reaches it from the LAN until you map it to a host port here.
    - **Storage → Host Path Volumes:** mount `/mnt/tank/apps/peekarr/config` → `/config`
 4. Install, wait for the pod to go green, then visit `http://<truenas-ip>:<node-port>/settings`.
 

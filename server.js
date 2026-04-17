@@ -724,7 +724,7 @@ app.get('/api/health', (req, res) => {
 });
 
 // ── Go ────────────────────────────────────────────────────────────────────────
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`Peekarr running at http://localhost:${PORT}`);
   console.log(`Config directory: ${CONFIG_DIR}`);
   if (!getSetting('tmdb_api_key')) {
