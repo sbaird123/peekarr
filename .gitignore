@@ -1,0 +1,22 @@
+node_modules/
+.env
+.env.local
+
+# SQLite
+data.db
+data.db-journal
+data.db-wal
+data.db-shm
+
+# Docker volume
+config/
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
+.claude/
+
+# Logs
+*.log
+npm-debug.log*

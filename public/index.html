@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Peekarr</title>
+
+  <!-- Preconnect to origins we fetch from on first paint -->
+  <link rel="preconnect" href="https://i.ytimg.com" crossorigin />
+  <link rel="preconnect" href="https://www.youtube.com" crossorigin />
+  <link rel="preconnect" href="https://image.tmdb.org" crossorigin />
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
+  <link rel="dns-prefetch" href="https://www.googlevideo.com" />
+
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swiper@11/swiper-bundle.min.css" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <!-- Top bar -->
+  <header id="topbar">
+    <div id="logo">Peekarr</div>
+    <div id="mode-toggle">
+      <button class="mode-btn active" data-mode="movies">Movies</button>
+      <button class="mode-btn" data-mode="tv">TV</button>
+    </div>
+    <div id="nav-tabs">
+      <!-- tabs injected by JS -->
+    </div>
+    <button id="search-btn" title="Search">&#128269;</button>
+    <a id="settings-btn" href="/settings" title="Settings" aria-label="Settings">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="3"/>
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+      </svg>
+    </a>
+  </header>
+
+  <!-- Search overlay -->
+  <div id="search-overlay" class="hidden">
+    <div id="search-bar">
+      <input id="search-input" type="text" placeholder="Search..." autocomplete="off" />
+      <button id="search-close">&#10005;</button>
+    </div>
+    <div id="search-results"></div>
+  </div>
+
+  <!-- Main swiper -->
+  <div class="swiper" id="main-swiper">
+    <div class="swiper-wrapper" id="swiper-wrapper">
+      <!-- slides injected by JS -->
+    </div>
+  </div>
+
+  <!-- Add to Radarr modal -->
+  <div id="modal-overlay" class="hidden">
+    <div id="modal">
+      <h2 id="modal-title"></h2>
+      <label>Quality Profile
+        <select id="modal-quality"></select>
+      </label>
+      <label>Root Folder
+        <select id="modal-folder"></select>
+      </label>
+      <div id="modal-actions">
+        <button id="modal-cancel">Cancel</button>
+        <button id="modal-confirm">Add</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div id="toast"></div>
+
+  <!-- Loading (hidden by default — SSR hydrates first paint; shown only on tab switches) -->
+  <div id="loading-overlay" class="hidden">
+    <div class="spinner"></div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/swiper@11/swiper-bundle.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
