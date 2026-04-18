@@ -285,12 +285,12 @@ function buildSlide(item, index) {
   slide.querySelector('.btn-watched').addEventListener('click', async () => {
     await markWatched(item);
     toast(`"${item.title}" marked as watched`);
-    if (swiper) swiper.slideNext();
+    advanceOrLoad();
   });
 
   slide.querySelector('.btn-skip').addEventListener('click', () => {
     recordSkip(item.id);
-    if (swiper) swiper.slideNext();
+    advanceOrLoad();
   });
 
   slide.querySelector(`.${btnClass}`).addEventListener('click', () => openModal(item));
@@ -450,6 +450,28 @@ function autoPlaySlide(index) {
 function ensurePlayer(item, index) {
   if (players[index]) return;
   createPlayer(item, index);
+}
+
+// Skip/Watched helper: advance to next slide, but if we're already on the
+// last one, kick loadFeed() and advance when the new slides arrive. Guards
+// against the "skip does nothing" dead-end when the feed pipeline runs dry.
+function advanceOrLoad() {
+  if (!swiper) return;
+  const atEnd = swiper.activeIndex >= itemCache.length - 1;
+  if (!atEnd) {
+    swiper.slideNext();
+    return;
+  }
+  // Already on the last slide — need more content before we can advance.
+  if (currentPage > totalPages) {
+    toast('No more trailers in this list — try another tab');
+    return;
+  }
+  const targetLen = itemCache.length;
+  loadFeed().then(() => {
+    if (itemCache.length > targetLen && swiper) swiper.slideNext();
+    else toast('No more trailers in this list — try another tab');
+  });
 }
 
 // Keep only the active player and the forward window; destroy the rest.
