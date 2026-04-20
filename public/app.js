@@ -114,12 +114,11 @@ const TABS = {
     { list: 'popular',     label: 'Popular' },
   ],
   tv: [
-    { list: 'trending',    label: 'Trending' },
-    { list: 'popular',     label: 'Popular' },
-    { list: 'new',         label: 'New' },
-    { list: 'upcoming',    label: 'Upcoming' },
-    { list: 'on_the_air',  label: 'On Air' },
-    { list: 'top_rated',   label: 'Top Rated' },
+    { list: 'trending',      label: 'Trending' },
+    { list: 'popular',       label: 'Popular' },
+    { list: 'new_upcoming',  label: 'New & Upcoming' },
+    { list: 'on_the_air',    label: 'On Air' },
+    { list: 'top_rated',     label: 'Top Rated' },
   ],
 };
 

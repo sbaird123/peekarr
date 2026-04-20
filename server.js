@@ -215,26 +215,18 @@ async function buildMovieFeed({ list, page }) {
 }
 
 async function buildTvFeed({ list, page }) {
-  // TMDB has no /tv/upcoming or /tv/new — synthesize both via /discover/tv
-  // with date filters, sorted by popularity.
+  // TMDB has no /tv/upcoming — synthesize "New & Upcoming" via /discover/tv
+  // filtered to shows first-airing from 45 days ago onward, sorted by
+  // popularity (covers both just-premiered and not-yet-aired).
   let data;
   if (list === 'trending') {
     data = await tmdb('/trending/tv/week', { page }, POLICY_LIST);
-  } else if (list === 'upcoming') {
-    const today = new Date().toISOString().slice(0, 10);
-    data = await tmdb('/discover/tv', {
-      page,
-      'first_air_date.gte': today,
-      sort_by: 'popularity.desc',
-    }, POLICY_LIST);
-  } else if (list === 'new') {
-    const today = new Date();
-    const start = new Date(today);
-    start.setDate(today.getDate() - 45);
+  } else if (list === 'new_upcoming') {
+    const start = new Date();
+    start.setDate(start.getDate() - 45);
     data = await tmdb('/discover/tv', {
       page,
       'first_air_date.gte': start.toISOString().slice(0, 10),
-      'first_air_date.lte': today.toISOString().slice(0, 10),
       sort_by: 'popularity.desc',
     }, POLICY_LIST);
   } else {
@@ -325,12 +317,11 @@ const WARM_LISTS = [
   { mode: 'movies', list: 'upcoming'   },
   { mode: 'movies', list: 'now_playing'},
   { mode: 'movies', list: 'popular'    },
-  { mode: 'tv',     list: 'trending'   },
-  { mode: 'tv',     list: 'popular'    },
-  { mode: 'tv',     list: 'new'        },
-  { mode: 'tv',     list: 'upcoming'   },
-  { mode: 'tv',     list: 'on_the_air' },
-  { mode: 'tv',     list: 'top_rated'  },
+  { mode: 'tv',     list: 'trending'     },
+  { mode: 'tv',     list: 'popular'      },
+  { mode: 'tv',     list: 'new_upcoming' },
+  { mode: 'tv',     list: 'on_the_air'   },
+  { mode: 'tv',     list: 'top_rated'    },
 ];
 
 let prewarmRunning = false;
