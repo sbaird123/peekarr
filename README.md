@@ -9,7 +9,9 @@ Built to feel like any other *arr — drop it in your Docker stack, configure th
 ## Features
 
 - Vertical swipe feed of YouTube trailers (TMDB source)
-- **Movies** tab (Upcoming / Now Playing / Popular) and **TV** tab (Trending / Popular / On Air / Top Rated)
+- **Movies** tab (Upcoming / Now Playing / Popular) and **TV** tab (Trending / Popular / New & Upcoming / On Air / Top Rated)
+- **Library** tab — trailers for everything already in your Radarr + Sonarr libraries, so you can rediscover stuff you forgot you had
+- **Play On TV** — with Jellyfin configured, one tap in the Library tab beams the movie or show straight to a Jellyfin client (TV, Chromecast, browser tab, etc.) via Jellyfin's remote-control API
 - One-tap **Add to Radarr / Sonarr** with quality profile + root folder selection
 - Search bar for anything in TMDB
 - Marks already-in-library entries so you don't re-add
@@ -42,6 +44,7 @@ Open <http://localhost:3000/settings> and plug in:
 - **TMDB API key** (free from <https://www.themoviedb.org/settings/api>)
 - **Radarr** URL + API key (Radarr → Settings → General → Security)
 - **Sonarr** URL + API key (Sonarr → Settings → General → Security)
+- **Jellyfin** URL + API key *(optional, enables Library → Play On TV — Jellyfin → Dashboard → API Keys → New)*. After saving, open Jellyfin on the TV/browser you want to cast to, then pick it from the **Play On device** dropdown.
 
 Hit **Test** next to each one, then **Save Changes**. Visit `/` and start swiping.
 
@@ -96,6 +99,8 @@ Everything is optional — the Settings UI is the source of truth. Env vars only
 | `RADARR_API_KEY` | Radarr API key                                             |
 | `SONARR_URL`     | e.g. `http://sonarr:8989`                                  |
 | `SONARR_API_KEY` | Sonarr API key                                             |
+| `JELLYFIN_URL`   | e.g. `http://jellyfin:8096` (optional, enables Play On TV) |
+| `JELLYFIN_API_KEY` | Jellyfin API key                                         |
 
 ## Volume layout
 
