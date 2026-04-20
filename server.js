@@ -49,14 +49,22 @@ const SETTING_KEYS = [
   'radarr_api_key',
   'sonarr_url',
   'sonarr_api_key',
+  'jellyfin_url',
+  'jellyfin_api_key',
+  'jellyfin_session_id',  // target "Play On" client (persisted)
+  'jellyfin_session_name', // cached display label
 ];
 
 const envDefaults = {
-  tmdb_api_key:   process.env.TMDB_API_KEY   || '',
-  radarr_url:     process.env.RADARR_URL     || 'http://localhost:7878',
-  radarr_api_key: process.env.RADARR_API_KEY || '',
-  sonarr_url:     process.env.SONARR_URL     || 'http://localhost:8989',
-  sonarr_api_key: process.env.SONARR_API_KEY || '',
+  tmdb_api_key:       process.env.TMDB_API_KEY       || '',
+  radarr_url:         process.env.RADARR_URL         || 'http://localhost:7878',
+  radarr_api_key:     process.env.RADARR_API_KEY     || '',
+  sonarr_url:         process.env.SONARR_URL         || 'http://localhost:8989',
+  sonarr_api_key:     process.env.SONARR_API_KEY     || '',
+  jellyfin_url:       process.env.JELLYFIN_URL       || '',
+  jellyfin_api_key:   process.env.JELLYFIN_API_KEY   || '',
+  jellyfin_session_id: '',
+  jellyfin_session_name: '',
 };
 
 function getSetting(key) {
@@ -632,6 +640,250 @@ app.get('/api/sonarr/config', async (req, res) => {
   }
 });
 
+// ── Jellyfin routes ───────────────────────────────────────────────────────────
+async function jellyfin(method, endpoint, { body, query, overrideUrl, overrideKey } = {}) {
+  const base = normalizeUrl(overrideUrl || getSetting('jellyfin_url'));
+  const key  = overrideKey || getSetting('jellyfin_api_key');
+  if (!base || !key) throw new Error('Jellyfin not configured — open Settings → Applications');
+  const qs = new URLSearchParams(query || {});
+  qs.set('api_key', key);
+  const url = `${base}${endpoint}?${qs.toString()}`;
+  const opts = {
+    method,
+    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+  };
+  if (body) opts.body = JSON.stringify(body);
+  const r = await fetchTimeout(url, opts, 6000);
+  const text = await r.text();
+  if (!r.ok) throw new Error(`Jellyfin ${r.status}: ${text || r.statusText}`);
+  return text ? JSON.parse(text) : {};
+}
+
+// Look up a Jellyfin library item by TMDB (or TVDB, for shows Jellyfin only
+// stored the TVDB id for) id. Jellyfin 10.8+ honours the anyProviderIdEquals
+// filter, but older/misconfigured servers silently ignore it and return the
+// whole catalog — so we always post-filter by ProviderIds and never trust the
+// first row blindly. That bug shipped a "wrong thing played" report during
+// the first Play On test.
+async function jellyfinLookup({ tmdbId, tvdbId, mediaType }) {
+  const itemType = mediaType === 'tv' ? 'Series' : 'Movie';
+  const wantTmdb = tmdbId ? String(tmdbId) : null;
+  const wantTvdb = tvdbId ? String(tvdbId) : null;
+
+  const matches = (item) => {
+    const ids = item && item.ProviderIds ? item.ProviderIds : {};
+    for (const [k, v] of Object.entries(ids)) {
+      const lk = k.toLowerCase();
+      if (wantTmdb && lk === 'tmdb' && String(v) === wantTmdb) return true;
+      if (wantTvdb && lk === 'tvdb' && String(v) === wantTvdb) return true;
+    }
+    return false;
+  };
+
+  const queries = [];
+  if (wantTmdb) queries.push(`tmdb.${wantTmdb}`);
+  if (wantTvdb) queries.push(`tvdb.${wantTvdb}`);
+
+  // 1) Preferred path: server-side filter — try each provider in turn.
+  for (const q of queries) {
+    const filtered = await jellyfin('GET', '/Items', {
+      query: {
+        recursive: 'true',
+        includeItemTypes: itemType,
+        anyProviderIdEquals: q,
+        limit: '5',
+        fields: 'ProviderIds',
+      },
+    });
+    const hit = (filtered.Items || []).find(matches);
+    if (hit) return hit;
+  }
+
+  // 2) Fallback: broader listing, client-side filter. Cap at 500 rows — if
+  // it's not in there, we give up rather than page the whole library.
+  const broad = await jellyfin('GET', '/Items', {
+    query: {
+      recursive: 'true',
+      includeItemTypes: itemType,
+      limit: '500',
+      fields: 'ProviderIds',
+    },
+  });
+  const hit = (broad.Items || []).find(matches);
+  return hit || null;
+}
+
+app.get('/api/jellyfin/sessions', async (req, res) => {
+  try {
+    // Accept url/apiKey overrides so the Settings page can refresh the device
+    // list using the current (unsaved) form values — otherwise the user has to
+    // Save before the dropdown works, which isn't obvious.
+    const sessions = await jellyfin('GET', '/Sessions', {
+      overrideUrl: req.query.url || undefined,
+      overrideKey: req.query.apiKey || undefined,
+    });
+    // Filter to sessions that can actually play video — drop dead/idle entries.
+    const playable = (sessions || [])
+      .filter((s) => s.DeviceId && s.SupportsRemoteControl !== false)
+      .map((s) => ({
+        id: s.Id,
+        device: s.DeviceName || 'Unknown device',
+        client: s.Client || '',
+        user: s.UserName || '',
+        active: !!s.LastActivityDate,
+      }));
+    res.json(playable);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/jellyfin/play', async (req, res) => {
+  try {
+    const { tmdbId, tvdbId, mediaType } = req.body || {};
+    if (!tmdbId && !tvdbId) return res.status(400).json({ error: 'tmdbId or tvdbId required' });
+    const sessionId = getSetting('jellyfin_session_id');
+    if (!sessionId) return res.status(400).json({ error: 'No Jellyfin target device set — open Settings → Applications' });
+
+    const item = await jellyfinLookup({ tmdbId, tvdbId, mediaType });
+    if (!item) {
+      const label = mediaType === 'tv' ? 'show' : 'movie';
+      return res.status(404).json({ error: `Jellyfin doesn't have this ${label} (or its metadata is missing a TMDB/TVDB id)` });
+    }
+    await jellyfin('POST', `/Sessions/${encodeURIComponent(sessionId)}/Playing`, {
+      query: { itemIds: item.Id, playCommand: 'PlayNow' },
+    });
+    res.json({ ok: true, item: { id: item.Id, name: item.Name } });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Library feed (Radarr + Sonarr merged, trailers from TMDB) ────────────────
+let libraryCache = { items: null, builtAt: 0, building: null };
+const LIBRARY_TTL_MS = 60 * 60 * 1000; // 1 hour
+
+async function buildLibrary() {
+  const out = [];
+
+  // Radarr movies
+  try {
+    const movies = await radarr('GET', '/movie');
+    for (const m of movies || []) {
+      if (!m.tmdbId) continue;
+      out.push({
+        id: m.tmdbId,
+        title: m.title,
+        overview: m.overview || '',
+        release_date: m.inCinemas || (m.year ? `${m.year}-01-01` : ''),
+        poster_path: null,
+        backdrop_path: null,
+        vote_average: m.ratings?.tmdb?.value || m.ratings?.imdb?.value || 0,
+        media_type: 'movie',
+        _radarrHasFile: !!m.hasFile,
+      });
+    }
+  } catch (err) { console.warn('[library] radarr:', err.message); }
+
+  // Sonarr series
+  try {
+    const series = await sonarr('GET', '/series');
+    for (const s of series || []) {
+      if (!s.tmdbId) continue;
+      out.push({
+        id: s.tmdbId,
+        tvdb_id: s.tvdbId || null,
+        title: s.title,
+        overview: s.overview || '',
+        release_date: s.firstAired || (s.year ? `${s.year}-01-01` : ''),
+        poster_path: null,
+        backdrop_path: null,
+        vote_average: s.ratings?.value || 0,
+        media_type: 'tv',
+        _sonarrHasFile: (s.statistics?.episodeFileCount || 0) > 0,
+      });
+    }
+  } catch (err) { console.warn('[library] sonarr:', err.message); }
+
+  // Enrich with TMDB trailers + artwork. One call per item via
+  // append_to_response=videos (halves the request count vs. fetching details
+  // and videos separately). Chunk width keeps TMDB's 40 req/s ceiling in
+  // sight; every response is SWR-cached so warm rebuilds are nearly instant.
+  const enriched = [];
+  const CHUNK = 16;
+  for (let i = 0; i < out.length; i += CHUNK) {
+    const batch = out.slice(i, i + CHUNK);
+    const results = await Promise.all(batch.map(async (it) => {
+      try {
+        const endpoint = it.media_type === 'tv' ? 'tv' : 'movie';
+        const details = await tmdb(`/${endpoint}/${it.id}`, { append_to_response: 'videos' }, POLICY_STATIC);
+        const trailer = pickTrailer(details.videos || {});
+        if (!trailer) return null;
+        return {
+          ...it,
+          title: it.title || details.title || details.name,
+          overview: it.overview || details.overview || '',
+          poster_path:   poster(details.poster_path),
+          backdrop_path: backdrop(details.backdrop_path),
+          vote_average: details.vote_average || it.vote_average,
+          youtube_key: trailer.key,
+        };
+      } catch { return null; }
+    }));
+    enriched.push(...results.filter(Boolean));
+  }
+  return enriched;
+}
+
+async function getLibrary() {
+  const now = Date.now();
+  const fresh = libraryCache.items && now - libraryCache.builtAt < LIBRARY_TTL_MS;
+  if (fresh) return libraryCache.items;
+
+  // Stale cache present — serve it immediately, refresh in the background so
+  // the user never waits through a second cold build.
+  if (libraryCache.items && !libraryCache.building) {
+    libraryCache.building = buildLibrary()
+      .then((items) => { libraryCache = { items, builtAt: Date.now(), building: null }; return items; })
+      .catch((err) => { libraryCache.building = null; console.warn('[library] refresh:', err.message); });
+    return libraryCache.items;
+  }
+
+  if (libraryCache.building) return libraryCache.building;
+  libraryCache.building = buildLibrary()
+    .then((items) => {
+      libraryCache = { items, builtAt: Date.now(), building: null };
+      return items;
+    })
+    .catch((err) => {
+      libraryCache.building = null;
+      throw err;
+    });
+  return libraryCache.building;
+}
+
+// Cheap status probe so the UI can gray out modes/buttons for unconfigured
+// services without having to run a full config fetch.
+app.get('/api/services/status', (req, res) => {
+  res.json({
+    radarr:   !!(getSetting('radarr_url')   && getSetting('radarr_api_key')),
+    sonarr:   !!(getSetting('sonarr_url')   && getSetting('sonarr_api_key')),
+    jellyfin: !!(getSetting('jellyfin_url') && getSetting('jellyfin_api_key') && getSetting('jellyfin_session_id')),
+  });
+});
+
+app.get('/api/library/feed', async (req, res) => {
+  try {
+    const items = await getLibrary();
+    // Client shuffles and paginates client-side; serve everything so
+    // swipes never run dry.
+    publicCache(res, 60);
+    res.json({ results: items, total_pages: 1, page: 1 });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post('/api/sonarr/add', async (req, res) => {
   try {
     const { tvdbId, qualityProfileId, rootFolderPath } = req.body;
@@ -685,7 +937,7 @@ app.post('/api/settings', (req, res) => {
   for (const key of SETTING_KEYS) {
     if (!(key in body)) continue;
     let val = body[key] == null ? '' : String(body[key]).trim();
-    if (key === 'radarr_url' || key === 'sonarr_url') val = normalizeUrl(val);
+    if (key === 'radarr_url' || key === 'sonarr_url' || key === 'jellyfin_url') val = normalizeUrl(val);
     setSetting(key, val);
   }
   res.json({ ok: true, settings: allSettings() });
@@ -716,6 +968,15 @@ app.post('/api/settings/test', async (req, res) => {
       if (!r.ok) throw new Error(`${service} ${r.status}`);
       const info = await r.json();
       return res.json({ ok: true, version: info.version, name: info.instanceName || info.appName });
+    } else if (service === 'jellyfin') {
+      const base = normalizeUrl(url || getSetting('jellyfin_url'));
+      const key  = apiKey || getSetting('jellyfin_api_key');
+      if (!base) throw new Error('URL is empty');
+      if (!key)  throw new Error('API key is empty');
+      const r = await fetchTimeout(`${base}/System/Info/Public?api_key=${encodeURIComponent(key)}`, {}, 6000);
+      if (!r.ok) throw new Error(`Jellyfin ${r.status}`);
+      const info = await r.json();
+      return res.json({ ok: true, version: info.Version, name: info.ServerName });
     } else {
       return res.status(400).json({ ok: false, error: 'Unknown service' });
     }
@@ -747,5 +1008,12 @@ app.listen(PORT, '0.0.0.0', () => {
   } else {
     setImmediate(() => prewarm({ label: 'startup prewarm' }));
     schedulePrewarm();
+    // Warm the library cache too if Radarr/Sonarr are configured. Delayed so
+    // it doesn't fight the startup prewarm for TMDB bandwidth.
+    if (getSetting('radarr_api_key') || getSetting('sonarr_api_key')) {
+      setTimeout(() => {
+        getLibrary().catch((err) => console.warn('[library] prewarm:', err.message));
+      }, 5000);
+    }
   }
 });

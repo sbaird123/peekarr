@@ -75,6 +75,7 @@ let itemCache = [];
 // playback without the muted-first-then-unmute dance. Flip this on any gesture
 // so subsequent swipes unmute cleanly and eagerly.
 let audioEnabled = false;
+let servicesStatus = { radarr: false, sonarr: false, jellyfin: false };
 ['pointerdown', 'touchstart', 'keydown'].forEach((evt) => {
   window.addEventListener(evt, () => {
     audioEnabled = true;
@@ -120,6 +121,9 @@ const TABS = {
     { list: 'on_the_air',    label: 'On Air' },
     { list: 'top_rated',     label: 'Top Rated' },
   ],
+  library: [
+    { list: 'all', label: 'Everything' },
+  ],
 };
 
 // ── YouTube IFrame API (lazy) ─────────────────────────────────────────────────
@@ -144,6 +148,29 @@ function whenYtReady(cb) {
   if (ytApiReady) return cb();
   ytApiCallbacks.push(cb);
   loadYtApi();
+}
+
+async function refreshServicesStatus() {
+  try {
+    const r = await fetch('/api/services/status');
+    if (r.ok) servicesStatus = await r.json();
+  } catch {}
+  applyServicesStatus();
+}
+
+function applyServicesStatus() {
+  const libAvailable = servicesStatus.radarr || servicesStatus.sonarr;
+  const reason = libAvailable ? '' : 'Configure Radarr or Sonarr in Settings to use Library mode';
+  document.querySelectorAll('.mode-btn[data-mode="library"]').forEach((b) => {
+    b.disabled = !libAvailable;
+    b.title = reason;
+    b.classList.toggle('disabled', !libAvailable);
+  });
+  const sel = document.getElementById('mode-select');
+  if (sel) {
+    const opt = Array.from(sel.options).find((o) => o.value === 'library');
+    if (opt) { opt.disabled = !libAvailable; opt.textContent = libAvailable ? 'Library' : 'Library (not configured)'; }
+  }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -228,8 +255,9 @@ function buildSlide(item, index) {
 
   const safeTitle = (item.title || '').replace(/"/g, '&quot;');
   const year = item.release_date ? item.release_date.slice(0, 4) : '';
-  const btnClass = isTv ? 'btn-sonarr' : 'btn-radarr';
-  const btnLabel = isTv ? '+ Add to Sonarr' : '+ Add to Radarr';
+  const inLibraryMode = currentMode === 'library';
+  const btnClass = inLibraryMode ? 'btn-play' : (isTv ? 'btn-sonarr' : 'btn-radarr');
+  const btnLabel = inLibraryMode ? '▶ Play on TV' : (isTv ? '+ Add to Sonarr' : '+ Add to Radarr');
   const thumb = ytThumb(item.youtube_key);
 
   slide.innerHTML = `
@@ -294,7 +322,12 @@ function buildSlide(item, index) {
     advanceOrLoad();
   });
 
-  slide.querySelector(`.${btnClass}`).addEventListener('click', () => openModal(item));
+  if (inLibraryMode) {
+    const playBtn = slide.querySelector(`.${btnClass}`);
+    playBtn.addEventListener('click', () => playOnJellyfin(item, playBtn));
+  } else {
+    slide.querySelector(`.${btnClass}`).addEventListener('click', () => openModal(item));
+  }
 
   return slide;
 }
@@ -518,8 +551,9 @@ async function loadFeed(reset = false) {
   // Only show the full-screen spinner on cold load (nothing visible yet).
   // For tab switches we keep the old slides on-screen during the fetch so the
   // UI doesn't feel like it's reloading — the swap happens atomically once
-  // the new data arrives.
-  const coldLoad = reset && !itemCache.length;
+  // the new data arrives. Exception: library mode's first build can take 20s+
+  // as it enriches every library item with TMDB trailers, so always spin.
+  const coldLoad = reset && (!itemCache.length || currentMode === 'library');
   if (coldLoad) setLoading(true);
 
   // Compute the fetch target page without mutating shared state yet, so an
@@ -531,28 +565,39 @@ async function loadFeed(reset = false) {
   }
 
   try {
-    const base = currentMode === 'tv'
-      ? `/api/shows/feed?list=${currentList}`
-      : `/api/feed?list=${currentList}`;
-
     let results, newTotalPages, nextPage;
 
-    if (reset) {
-      const page2 = fetchPage + 1;
-      const [r1, r2] = await Promise.all([
-        fetch(`${base}&page=${fetchPage}`, { signal }).then((r) => r.json()),
-        fetch(`${base}&page=${page2}`, { signal }).then((r) => r.json()),
-      ]);
-      if (r1.error) throw new Error(r1.error);
-      newTotalPages = r1.total_pages;
-      nextPage = page2 + 1;
-      results = shuffle([...(r1.results || []), ...(r2.results || [])]);
-    } else {
-      const r = await fetch(`${base}&page=${currentPage}`, { signal }).then((r) => r.json());
+    if (currentMode === 'library') {
+      // The library endpoint returns everything in one payload; subsequent
+      // calls are no-ops. No pagination, just shuffle once.
+      if (!reset) { loading = false; return; }
+      const r = await fetch('/api/library/feed', { signal }).then((r) => r.json());
       if (r.error) throw new Error(r.error);
-      newTotalPages = r.total_pages;
-      nextPage = currentPage + 1;
+      newTotalPages = 1;
+      nextPage = 2;
       results = shuffle(r.results || []);
+    } else {
+      const base = currentMode === 'tv'
+        ? `/api/shows/feed?list=${currentList}`
+        : `/api/feed?list=${currentList}`;
+
+      if (reset) {
+        const page2 = fetchPage + 1;
+        const [r1, r2] = await Promise.all([
+          fetch(`${base}&page=${fetchPage}`, { signal }).then((r) => r.json()),
+          fetch(`${base}&page=${page2}`, { signal }).then((r) => r.json()),
+        ]);
+        if (r1.error) throw new Error(r1.error);
+        newTotalPages = r1.total_pages;
+        nextPage = page2 + 1;
+        results = shuffle([...(r1.results || []), ...(r2.results || [])]);
+      } else {
+        const r = await fetch(`${base}&page=${currentPage}`, { signal }).then((r) => r.json());
+        if (r.error) throw new Error(r.error);
+        newTotalPages = r.total_pages;
+        nextPage = currentPage + 1;
+        results = shuffle(r.results || []);
+      }
     }
 
     // Data arrived — commit the reset now (tear down old players, clear cache,
@@ -596,8 +641,12 @@ async function loadFeed(reset = false) {
       }
     }
 
-    statusAbortController = new AbortController();
-    checkStatusBatch(filtered, statusAbortController.signal);
+    if (currentMode !== 'library') {
+      statusAbortController = new AbortController();
+      checkStatusBatch(filtered, statusAbortController.signal);
+    } else if (reset && !filtered.length) {
+      toast('No trailers found in your library — check Radarr/Sonarr and that items have TMDB matches');
+    }
   } catch (err) {
     if (err.name !== 'AbortError') {
       console.error('[loadFeed] error:', err);
@@ -705,6 +754,31 @@ function markBtn(tmdbId, label, cls) {
   });
 }
 
+// ── Jellyfin Play On ─────────────────────────────────────────────────────────
+async function playOnJellyfin(item, btn) {
+  const originalLabel = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Sending to TV…'; }
+  toast(`Beaming "${item.title}" to your TV…`);
+  try {
+    const res = await fetch('/api/jellyfin/play', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        tmdbId: item.id,
+        tvdbId: item.tvdb_id || undefined,
+        mediaType: item.media_type || 'movie',
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to play');
+    toast(`Playing "${item.title}" on your TV`);
+  } catch (err) {
+    toast('Play failed: ' + err.message, 5000);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = originalLabel; }
+  }
+}
+
 // ── Modal (Radarr + Sonarr) ───────────────────────────────────────────────────
 async function openModal(item) {
   pendingItem = item;
@@ -784,6 +858,11 @@ document.getElementById('modal-confirm').addEventListener('click', async () => {
 // ── Mode toggle ───────────────────────────────────────────────────────────────
 function switchMode(mode) {
   if (mode === currentMode) return;
+  if (mode === 'library' && !servicesStatus.radarr && !servicesStatus.sonarr) {
+    toast('Configure Radarr or Sonarr in Settings to use Library mode');
+    document.getElementById('mode-select').value = currentMode;
+    return;
+  }
   currentMode = mode;
   currentList = TABS[currentMode][0].list;
   document.querySelectorAll('.mode-btn').forEach((b) => {
@@ -943,6 +1022,12 @@ function hydrateInitial(payload) {
 // ── Boot ──────────────────────────────────────────────────────────────────────
 (function boot() {
   renderTabs();
+  refreshServicesStatus();
+  // Re-probe when the user returns from the Settings tab so the Library button
+  // enables without a full page refresh.
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) refreshServicesStatus();
+  });
 
   // Hydrate watched from SSR if present (saves one round trip).
   const preWatched = window.__INITIAL_WATCHED__;

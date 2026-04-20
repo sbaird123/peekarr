@@ -106,6 +106,10 @@ html, body {
   white-space: nowrap;
   text-shadow: 0 1px 3px rgba(0,0,0,.85);
 }
+.mode-btn.disabled, .mode-btn:disabled {
+  opacity: .35;
+  cursor: not-allowed;
+}
 .mode-btn.active {
   background: var(--accent);
   color: #fff;
@@ -311,7 +315,7 @@ html, body {
   margin-top: 4px;
 }
 
-.btn-radarr, .btn-sonarr {
+.btn-radarr, .btn-sonarr, .btn-play {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -328,7 +332,9 @@ html, body {
 .btn-radarr:hover { background: #c0070f; }
 .btn-sonarr { background: #1a7abf; }
 .btn-sonarr:hover { background: #155f96; }
-.btn-radarr:active, .btn-sonarr:active { transform: scale(.96); }
+.btn-play { background: #aa78ff; }
+.btn-play:hover { background: #8f5ae6; }
+.btn-radarr:active, .btn-sonarr:active, .btn-play:active { transform: scale(.96); }
 .btn-radarr.added, .btn-sonarr.added { background: #2ecc71; cursor: default; }
 .btn-radarr.exists, .btn-sonarr.exists { background: #555; cursor: default; }
 
