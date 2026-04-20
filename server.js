@@ -215,9 +215,21 @@ async function buildMovieFeed({ list, page }) {
 }
 
 async function buildTvFeed({ list, page }) {
-  const data = list === 'trending'
-    ? await tmdb('/trending/tv/week', { page }, POLICY_LIST)
-    : await tmdb(`/tv/${list}`, { page }, POLICY_LIST);
+  // TMDB has no /tv/upcoming — synthesize it via /discover/tv filtered to
+  // shows whose first air date is today-or-later, sorted by popularity.
+  let data;
+  if (list === 'trending') {
+    data = await tmdb('/trending/tv/week', { page }, POLICY_LIST);
+  } else if (list === 'upcoming') {
+    const today = new Date().toISOString().slice(0, 10);
+    data = await tmdb('/discover/tv', {
+      page,
+      'first_air_date.gte': today,
+      sort_by: 'popularity.desc',
+    }, POLICY_LIST);
+  } else {
+    data = await tmdb(`/tv/${list}`, { page }, POLICY_LIST);
+  }
   const shows = data.results || [];
   const enriched = await Promise.all(shows.map(async (show) => {
     try {
@@ -305,6 +317,7 @@ const WARM_LISTS = [
   { mode: 'movies', list: 'popular'    },
   { mode: 'tv',     list: 'trending'   },
   { mode: 'tv',     list: 'popular'    },
+  { mode: 'tv',     list: 'upcoming'   },
   { mode: 'tv',     list: 'on_the_air' },
   { mode: 'tv',     list: 'top_rated'  },
 ];

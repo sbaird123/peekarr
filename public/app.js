@@ -116,6 +116,7 @@ const TABS = {
   tv: [
     { list: 'trending',    label: 'Trending' },
     { list: 'popular',     label: 'Popular' },
+    { list: 'upcoming',    label: 'Upcoming' },
     { list: 'on_the_air',  label: 'On Air' },
     { list: 'top_rated',   label: 'Top Rated' },
   ],
