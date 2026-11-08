@@ -208,6 +208,18 @@ function pickTrailer(videos) {
   return trailer || null;
 }
 
+// TMDB list/search results only carry genre_ids — resolve them to names via the
+// (static, cached) genre lists. Returns [] on any failure so feeds still render.
+async function genreMap(kind) {
+  try {
+    const data = await tmdb(`/genre/${kind}/list`, {}, POLICY_STATIC);
+    return new Map((data.genres || []).map((g) => [g.id, g.name]));
+  } catch { return new Map(); }
+}
+function genreNames(ids, map) {
+  return (ids || []).map((id) => map.get(id)).filter(Boolean);
+}
+
 // ── Feed builders (reusable by routes + SSR + prewarm) ───────────────────────
 async function buildMovieFeed({ list, page }) {
   const data = await tmdb(`/movie/${list}`, { page }, POLICY_LIST);
@@ -218,6 +230,7 @@ async function buildMovieFeed({ list, page }) {
     const today = new Date().toISOString().slice(0, 10);
     movies = movies.filter((m) => m.release_date && m.release_date >= today);
   }
+  const genres = await genreMap('movie');
   const enriched = await Promise.all(movies.map(async (movie) => {
     try {
       const videos = await tmdb(`/movie/${movie.id}/videos`, {}, POLICY_STATIC);
@@ -227,6 +240,7 @@ async function buildMovieFeed({ list, page }) {
         id: movie.id,
         title: movie.title,
         overview: movie.overview,
+        genres: genreNames(movie.genre_ids, genres),
         release_date: movie.release_date,
         poster_path: poster(movie.poster_path),
         backdrop_path: backdrop(movie.backdrop_path),
@@ -262,6 +276,7 @@ async function buildTvFeed({ list, page }) {
     data = await tmdb(`/tv/${list}`, { page }, POLICY_LIST);
   }
   const shows = data.results || [];
+  const genres = await genreMap('tv');
   const enriched = await Promise.all(shows.map(async (show) => {
     try {
       const [videos, extIds] = await Promise.all([
@@ -275,6 +290,7 @@ async function buildTvFeed({ list, page }) {
         tvdb_id: extIds.tvdb_id || null,
         title: show.name,
         overview: show.overview,
+        genres: genreNames(show.genre_ids, genres),
         release_date: show.first_air_date,
         poster_path: poster(show.poster_path),
         backdrop_path: backdrop(show.backdrop_path),
@@ -294,6 +310,7 @@ async function buildTvFeed({ list, page }) {
 async function buildMovieSearch(q) {
   const data = await tmdb('/search/movie', { query: q }, POLICY_SEARCH);
   const movies = (data.results || []).slice(0, 20);
+  const genres = await genreMap('movie');
   const enriched = await Promise.all(movies.map(async (movie) => {
     try {
       const videos = await tmdb(`/movie/${movie.id}/videos`, {}, POLICY_STATIC);
@@ -302,6 +319,7 @@ async function buildMovieSearch(q) {
         id: movie.id,
         title: movie.title,
         overview: movie.overview,
+        genres: genreNames(movie.genre_ids, genres),
         release_date: movie.release_date,
         poster_path: poster(movie.poster_path),
         backdrop_path: backdrop(movie.backdrop_path),
@@ -317,6 +335,7 @@ async function buildMovieSearch(q) {
 async function buildTvSearch(q) {
   const data = await tmdb('/search/tv', { query: q }, POLICY_SEARCH);
   const shows = (data.results || []).slice(0, 20);
+  const genres = await genreMap('tv');
   const enriched = await Promise.all(shows.map(async (show) => {
     try {
       const [videos, extIds] = await Promise.all([
@@ -329,6 +348,7 @@ async function buildTvSearch(q) {
         tvdb_id: extIds.tvdb_id || null,
         title: show.name,
         overview: show.overview,
+        genres: genreNames(show.genre_ids, genres),
         release_date: show.first_air_date,
         poster_path: poster(show.poster_path),
         backdrop_path: backdrop(show.backdrop_path),
@@ -842,6 +862,7 @@ async function buildLibrary() {
           ...it,
           title: it.title || details.title || details.name,
           overview: it.overview || details.overview || '',
+          genres: (details.genres || []).map((g) => g.name),
           poster_path:   poster(details.poster_path),
           backdrop_path: backdrop(details.backdrop_path),
           vote_average: details.vote_average || it.vote_average,

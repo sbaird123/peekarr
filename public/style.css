@@ -299,13 +299,37 @@ html, body {
 }
 
 .slide-overview {
-  font-size: .85rem;
-  color: rgba(255,255,255,.75);
-  line-height: 1.4;
+  font-size: .9rem;
+  color: rgba(255,255,255,.8);
+  line-height: 1.45;
   display: -webkit-box;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
+  cursor: pointer;
+}
+.slide-overview.expanded {
+  display: block;
+  -webkit-line-clamp: unset;
+  max-height: 45vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  color: rgba(255,255,255,.92);
+}
+
+.slide-genres {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.genre-chip {
+  font-size: .7rem;
+  font-weight: 700;
+  padding: 3px 9px;
+  border-radius: 10px;
+  background: rgba(255,255,255,.14);
+  color: #fff;
+  letter-spacing: .02em;
 }
 
 /* action buttons */

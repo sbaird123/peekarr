@@ -272,6 +272,9 @@ function buildSlide(item, index) {
   const btnClass = inLibraryMode ? 'btn-play' : (isTv ? 'btn-sonarr' : 'btn-radarr');
   const btnLabel = inLibraryMode ? '▶ Play on TV' : (isTv ? '+ Add to Sonarr' : '+ Add to Radarr');
   const thumb = ytThumb(item.youtube_key);
+  const genreChips = (item.genres && item.genres.length)
+    ? `<div class="slide-genres">${item.genres.slice(0, 3).map((g) => `<span class="genre-chip">${escapeHtml(g)}</span>`).join('')}</div>`
+    : '';
 
   slide.innerHTML = `
     <div class="slide-bg" style="background-image:url('${item.backdrop_path || item.poster_path || ''}')"></div>
@@ -295,7 +298,8 @@ function buildSlide(item, index) {
         <span>${year}</span>
         ${isTv ? '<span class="media-badge">TV</span>' : ''}
       </div>
-      <div class="slide-overview">${escapeHtml(item.overview)}</div>
+      ${genreChips}
+      <div class="slide-overview" title="Tap to expand">${escapeHtml(item.overview)}</div>
       <div class="slide-actions">
         <button class="${btnClass}" data-tmdb-id="${item.id}" data-title="${safeTitle}" data-year="${year}" data-media-type="${item.media_type || 'movie'}">
           ${btnLabel}
@@ -305,6 +309,15 @@ function buildSlide(item, index) {
       </div>
     </div>
   `;
+
+  // Tap the description to expand it (scrollable) / collapse it again. While
+  // expanded, swiping on it scrolls the text instead of changing slides.
+  const overviewEl = slide.querySelector('.slide-overview');
+  overviewEl.addEventListener('click', () => {
+    const expanded = overviewEl.classList.toggle('expanded');
+    overviewEl.classList.toggle('swiper-no-swiping', expanded);
+    if (!expanded) overviewEl.scrollTop = 0;
+  });
 
   let tapCount = 0;
   let tapTimer = null;
